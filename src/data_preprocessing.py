@@ -57,7 +57,7 @@ def plot_n_drop_missing(df, missing_value=40):
     return df
 
 
-def plot_correlation_matrix(df, filename='correlation_matrix.png'):
+def plot_correlation_matrix(df, filename='correlation_matrix_1.png'):
     plt.figure(figsize=(15, 15))
     correlation_matrix = df.select_dtypes(exclude='object').corr().round(decimals=2)
     sns.heatmap(correlation_matrix,
