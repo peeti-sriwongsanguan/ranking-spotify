@@ -1,9 +1,80 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, RandomizedSearchCV
 from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.neighbors import KNeighborsRegressor
 from src.data_preprocessing import preprocess_data, save_plot
 from src.model import get_models, train_model
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+
+def tune_random_forest(X_train, y_train):
+    param_dist = {
+        'n_estimators': [100, 200, 300, 400, 500],
+        'max_depth': [10, 20, 30, 40, 50, None],
+        'min_samples_split': [2, 5, 10],
+        'min_samples_leaf': [1, 2, 4],
+        'bootstrap': [True, False]
+    }
+    rf = RandomForestRegressor(random_state=42)
+    rf_random = RandomizedSearchCV(estimator=rf, param_distributions=param_dist, n_iter=100, cv=3, random_state=42,
+                                   n_jobs=-1)
+    rf_random.fit(X_train, y_train)
+    return rf_random.best_estimator_
+
+
+def tune_gradient_boosting(X_train, y_train):
+    param_dist = {
+        'n_estimators': [100, 200, 300, 400, 500],
+        'learning_rate': [0.01, 0.1, 0.2],
+        'max_depth': [3, 4, 5, 6],
+        'min_samples_split': [2, 5, 10],
+        'min_samples_leaf': [1, 2, 4],
+        'subsample': [0.8, 0.9, 1.0]
+    }
+    gb = GradientBoostingRegressor(random_state=42)
+    gb_random = RandomizedSearchCV(estimator=gb, param_distributions=param_dist, n_iter=100, cv=3, random_state=42,
+                                   n_jobs=-1)
+    gb_random.fit(X_train, y_train)
+    return gb_random.best_estimator_
+
+
+def tune_knn(X_train, y_train):
+    param_dist = {
+        'n_neighbors': list(range(1, 31)),
+        'weights': ['uniform', 'distance'],
+        'p': [1, 2]
+    }
+    knn = KNeighborsRegressor()
+    knn_random = RandomizedSearchCV(estimator=knn, param_distributions=param_dist, n_iter=100, cv=3, random_state=42,
+                                    n_jobs=-1)
+    knn_random.fit(X_train, y_train)
+    return knn_random.best_estimator_
+
+
+class ImprovedNN(nn.Module):
+    def __init__(self, input_size):
+        super(ImprovedNN, self).__init__()
+        self.fc1 = nn.Linear(input_size, 128)
+        self.bn1 = nn.BatchNorm1d(128)
+        self.fc2 = nn.Linear(128, 64)
+        self.bn2 = nn.BatchNorm1d(64)
+        self.fc3 = nn.Linear(64, 32)
+        self.bn3 = nn.BatchNorm1d(32)
+        self.fc4 = nn.Linear(32, 1)
+        self.dropout = nn.Dropout(0.2)
+
+    def forward(self, x):
+        x = torch.relu(self.bn1(self.fc1(x)))
+        x = self.dropout(x)
+        x = torch.relu(self.bn2(self.fc2(x)))
+        x = self.dropout(x)
+        x = torch.relu(self.bn3(self.fc3(x)))
+        x = self.dropout(x)
+        return self.fc4(x)
 
 
 def main():
@@ -13,41 +84,31 @@ def main():
 
     X, y, features = preprocess_data(zip_filepath, csv_filename)
 
-    print("Shape of X:", X.shape)
-    print("Shape of y:", y.shape)
-    print("Sample of X:", X[:5])
-    print("Sample of y:", y[:5])
-
-    # Check for NaN or infinity values
-    if np.isnan(X).any() or np.isinf(X).any():
-        print("Warning: X contains NaN or infinity values")
-    if np.isnan(y).any() or np.isinf(y).any():
-        print("Warning: y contains NaN or infinity values")
-
     # Split the data
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    # Get models
-    models = get_models(X_train.shape[1])
-
-    # Train and evaluate models
+    # Tune and train models
     results = {}
 
-    for name, model in models.items():
-        print(f"Training {name}...")
-        try:
-            if name in ['Random Forest', 'Gradient Boosting', 'SVR', 'Elastic Net', 'KNN']:
-                model.fit(X_train, y_train)
-                y_pred = model.predict(X_test)
-                mse = mean_squared_error(y_test, y_pred)
-                r2 = r2_score(y_test, y_pred)
-            else:
-                mse, r2 = train_model(model, X_train, y_train, X_test, y_test)
+    print("Tuning Random Forest...")
+    rf_tuned = tune_random_forest(X_train, y_train)
+    rf_pred = rf_tuned.predict(X_test)
+    results['Tuned Random Forest'] = {'MSE': mean_squared_error(y_test, rf_pred), 'R2': r2_score(y_test, rf_pred)}
 
-            results[name] = {'MSE': mse, 'R2': r2}
-            print(f"{name} trained successfully. MSE: {mse:.4f}, R2: {r2:.4f}")
-        except Exception as e:
-            print(f"Error training {name}: {str(e)}")
+    print("Tuning Gradient Boosting...")
+    gb_tuned = tune_gradient_boosting(X_train, y_train)
+    gb_pred = gb_tuned.predict(X_test)
+    results['Tuned Gradient Boosting'] = {'MSE': mean_squared_error(y_test, gb_pred), 'R2': r2_score(y_test, gb_pred)}
+
+    print("Tuning KNN...")
+    knn_tuned = tune_knn(X_train, y_train)
+    knn_pred = knn_tuned.predict(X_test)
+    results['Tuned KNN'] = {'MSE': mean_squared_error(y_test, knn_pred), 'R2': r2_score(y_test, knn_pred)}
+
+    print("Training Improved NN...")
+    improved_nn = ImprovedNN(X_train.shape[1])
+    mse, r2 = train_model(improved_nn, X_train, y_train, X_test, y_test, epochs=200, batch_size=32)
+    results['Improved NN'] = {'MSE': mse, 'R2': r2}
 
     # Plot results
     plt.figure(figsize=(12, 6))
@@ -65,7 +126,7 @@ def main():
     plt.xticks(rotation=45, ha='right')
 
     plt.tight_layout()
-    save_plot("model_comparison.png")
+    save_plot("tuned_model_comparison.png")
 
     # Print results
     for name, metrics in results.items():
