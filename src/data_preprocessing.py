@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import os
 import seaborn as sns
 from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+import numpy as np
 
 
 def read_zip_file(zip_filepath, csv_filename, encoding='ISO-8859-1'):
@@ -96,13 +98,25 @@ def find_highly_correlated_features(df, threshold=0.70):
     return highest_corr
 
 
+# Remove rows with infinity values
+def clean_data(df, features):
+
+    df = df.replace([np.inf, -np.inf], np.nan)
+
+    # Impute NaN values with mean
+    imputer = SimpleImputer(strategy='mean')
+    df_imputed = pd.DataFrame(imputer.fit_transform(df[features]), columns=features)
+
+    return df_imputed
+
+
 def preprocess_data(zip_filepath, csv_filename):
     df = read_zip_file(zip_filepath, csv_filename)
 
     numeric_columns = ['Spotify_Streams', 'Spotify_Playlist_Count', 'Spotify_Playlist_Reach',
                        'YouTube_Views', 'YouTube_Likes', 'TikTok_Posts', 'TikTok_Likes',
                        'TikTok_Views', 'YouTube_Playlist_Reach', 'AirPlay_Spins', 'Deezer_Playlist_Reach',
-                       'Pandora_Streams', 'Pandora_Track_Stations', 'Shazam_Counts']
+                       'Pandora_Streams', 'Pandora_Track_Stations', 'Shazam_Counts', 'All_Time_Rank']
 
     df = clean_numeric_columns(df.copy(), numeric_columns)
     pd.set_option('display.float_format', lambda x: '%.f' % x)
@@ -111,14 +125,30 @@ def preprocess_data(zip_filepath, csv_filename):
     plot_correlation_matrix(df)
     find_highly_correlated_features(df, threshold=0.70)
 
-    return df
+    features = ['Spotify_Streams', 'Spotify_Playlist_Count', 'Spotify_Playlist_Reach', 'Spotify_Popularity',
+                'YouTube_Views', 'YouTube_Likes', 'TikTok_Posts', 'TikTok_Likes', 'TikTok_Views']
 
+    # Clean data to remove NaN and infinity values
+    X = clean_data(df, features)
+    y = df['All_Time_Rank'].dropna().astype(float)
 
-def prepare_features(df, features, target):
-    X = df[features]
-    y = df[target]
+    # Ensure X and y have the same number of samples
+    common_index = X.index.intersection(y.index)
+    X = X.loc[common_index]
+    y = y.loc[common_index]
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    return X_scaled, y
+    return X_scaled, y, features
+
+
+if __name__ == "__main__":
+    zip_filepath = r'data/Most Streamed Spotify Songs 2024.csv.zip'
+    csv_filename = 'Most Streamed Spotify Songs 2024.csv'
+    X, y, features = preprocess_data(zip_filepath, csv_filename)
+    print("Preprocessing completed successfully.")
+    print(f"X shape: {X.shape}")
+    print(f"y shape: {y.shape}")
+    print("Features:", features)
+    print("Sample of y:", y.head())
