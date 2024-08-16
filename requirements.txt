@@ -1,4 +1,3 @@
-pandas==2.2.2
-numpy==1.25.1
-matplotlib>=3.3.0,<4.0.0
+# Core dependencies
+pennylane>=0.17.0,<1.0.0
 seaborn>=0.11.0,<0.13.0
