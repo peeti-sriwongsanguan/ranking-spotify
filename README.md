@@ -28,6 +28,25 @@ This repo compare the performance of different algorithms, including a quantum n
    ```
    pip install -r requirements.txt
    ```
+   
+## Project Struture
+```
+ranking_spotify/
+│
+├── data/
+│   └── Most Streamed Spotify Songs 2024.csv.zip
+│
+├── src/
+│   ├── __init__.py
+│   ├── data_processing.py
+│   └── model.py
+│
+├── main.py
+├── .gitignore
+├── requirements.txt
+├── enyironment.yml
+└── README.md
+```
 
 ## Usage
 
@@ -42,6 +61,13 @@ This repo compare the performance of different algorithms, including a quantum n
    - A plot comparing the Mean Squared Error (MSE) and R-squared (R2) scores for all models.
    - Printed results for each model in the console.
    - The best performing model based on MSE.
+
+## EDA
+The following plot shows the missing value columns
+![missing](image/missing_values_plot.png)
+
+The following plot shows the correlation matrix
+![correlation](image/correlation_matrix.png)
 
 ## Models Implemented
 
