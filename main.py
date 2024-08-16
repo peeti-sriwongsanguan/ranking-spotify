@@ -1,71 +1,97 @@
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split, RandomizedSearchCV
 from sklearn.metrics import mean_squared_error, r2_score
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.neighbors import KNeighborsRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, VotingRegressor
+from sklearn.preprocessing import PolynomialFeatures, StandardScaler,PowerTransformer
+from sklearn.feature_selection import SelectFromModel, VarianceThreshold
 from src.data_preprocessing import preprocess_data, save_plot
-from src.model import get_models, train_model
+import xgboost as xgb
+import lightgbm as lgb
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.data import TensorDataset, DataLoader
+from src.model import get_models, train_model
+import time
+from sklearn.exceptions import ConvergenceWarning
+import warnings
+from functools import partial
+
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-def tune_random_forest(X_train, y_train):
-    param_dist = {
-        'n_estimators': [100, 200, 300, 400, 500],
-        'max_depth': [10, 20, 30, 40, 50, None],
-        'min_samples_split': [2, 5, 10],
-        'min_samples_leaf': [1, 2, 4],
-        'bootstrap': [True, False]
-    }
-    rf = RandomForestRegressor(random_state=42)
-    rf_random = RandomizedSearchCV(estimator=rf, param_distributions=param_dist, n_iter=100, cv=3, random_state=42,
-                                   n_jobs=-1)
-    rf_random.fit(X_train, y_train)
-    return rf_random.best_estimator_
+def create_polynomial_features(X, degree=2):
+    poly = PolynomialFeatures(degree=degree, include_bias=False)
+    return poly.fit_transform(X)
 
 
-def tune_gradient_boosting(X_train, y_train):
-    param_dist = {
-        'n_estimators': [100, 200, 300, 400, 500],
-        'learning_rate': [0.01, 0.1, 0.2],
-        'max_depth': [3, 4, 5, 6],
-        'min_samples_split': [2, 5, 10],
-        'min_samples_leaf': [1, 2, 4],
-        'subsample': [0.8, 0.9, 1.0]
-    }
-    gb = GradientBoostingRegressor(random_state=42)
-    gb_random = RandomizedSearchCV(estimator=gb, param_distributions=param_dist, n_iter=100, cv=3, random_state=42,
-                                   n_jobs=-1)
-    gb_random.fit(X_train, y_train)
-    return gb_random.best_estimator_
+def handle_outliers(X, y, contamination=0.1):
+    from sklearn.ensemble import IsolationForest
+    clf = IsolationForest(contamination=contamination, random_state=42, n_jobs=-1)
+    outlier_labels = clf.fit_predict(X)
+    X_clean = X[outlier_labels != -1]
+    y_clean = y[outlier_labels != -1]
+    return X_clean, y_clean
 
 
-def tune_knn(X_train, y_train):
-    param_dist = {
-        'n_neighbors': list(range(1, 31)),
-        'weights': ['uniform', 'distance'],
-        'p': [1, 2]
-    }
-    knn = KNeighborsRegressor()
-    knn_random = RandomizedSearchCV(estimator=knn, param_distributions=param_dist, n_iter=100, cv=3, random_state=42,
-                                    n_jobs=-1)
-    knn_random.fit(X_train, y_train)
-    return knn_random.best_estimator_
+def create_interaction_terms(X):
+    n_features = X.shape[1]
+    interactions = []
+    for i in range(n_features):
+        for j in range(i+1, n_features):
+            interactions.append(X[:, i] * X[:, j])
+    return np.column_stack(interactions)
+
+def apply_non_linear_transformations(X):
+    X_transformed = np.column_stack([
+        np.log1p(np.abs(X)),
+        np.sqrt(np.abs(X)),
+        np.square(X)
+    ])
+    return X_transformed
+
+
+def feature_engineering(X):
+    # Create interaction terms
+    X_interact = create_interaction_terms(X)
+
+    # Apply non-linear transformations
+    X_non_linear = apply_non_linear_transformations(X)
+
+    # Combine all features
+    X_engineered = np.hstack((X, X_interact, X_non_linear))
+
+    # Remove constant and highly correlated features
+    selector = VarianceThreshold(threshold=0.01)
+    X_engineered = selector.fit_transform(X_engineered)
+
+    # Remove highly correlated features
+    corr_matrix = np.abs(np.corrcoef(X_engineered.T))
+    upper_tri = corr_matrix[np.triu_indices(corr_matrix.shape[0], k=1)]
+    to_drop = [column for column in range(X_engineered.shape[1])
+               if any(corr_matrix[:, column] > 0.95) and corr_matrix[column, column] != 1]
+    X_engineered = np.delete(X_engineered, to_drop, axis=1)
+
+    return X_engineered
 
 
 class ImprovedNN(nn.Module):
     def __init__(self, input_size):
         super(ImprovedNN, self).__init__()
-        self.fc1 = nn.Linear(input_size, 128)
-        self.bn1 = nn.BatchNorm1d(128)
-        self.fc2 = nn.Linear(128, 64)
-        self.bn2 = nn.BatchNorm1d(64)
-        self.fc3 = nn.Linear(64, 32)
-        self.bn3 = nn.BatchNorm1d(32)
-        self.fc4 = nn.Linear(32, 1)
-        self.dropout = nn.Dropout(0.2)
+        self.fc1 = nn.Linear(input_size, 256)
+        self.bn1 = nn.BatchNorm1d(256)
+        self.fc2 = nn.Linear(256, 128)
+        self.bn2 = nn.BatchNorm1d(128)
+        self.fc3 = nn.Linear(128, 64)
+        self.bn3 = nn.BatchNorm1d(64)
+        self.fc4 = nn.Linear(64, 32)
+        self.bn4 = nn.BatchNorm1d(32)
+        self.fc5 = nn.Linear(32, 1)
+        self.dropout = nn.Dropout(0.3)
 
     def forward(self, x):
         x = torch.relu(self.bn1(self.fc1(x)))
@@ -74,59 +100,207 @@ class ImprovedNN(nn.Module):
         x = self.dropout(x)
         x = torch.relu(self.bn3(self.fc3(x)))
         x = self.dropout(x)
-        return self.fc4(x)
+        x = torch.relu(self.bn4(self.fc4(x)))
+        x = self.dropout(x)
+        return self.fc5(x)
+
+
+def train_improved_nn(model, X_train, y_train, X_test, y_test, epochs=300, batch_size=64):
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, factor=0.5)
+
+    X_train_tensor = torch.FloatTensor(X_train)
+    y_train_tensor = torch.FloatTensor(y_train.values).unsqueeze(1)
+    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+
+    X_test_tensor = torch.FloatTensor(X_test)
+    y_test_tensor = torch.FloatTensor(y_test.values).unsqueeze(1)
+
+    for epoch in range(epochs):
+        model.train()
+        for batch_X, batch_y in train_loader:
+            optimizer.zero_grad()
+            outputs = model(batch_X)
+            loss = criterion(outputs, batch_y)
+            loss.backward()
+            optimizer.step()
+
+        model.eval()
+        with torch.no_grad():
+            test_loss = criterion(model(X_test_tensor), y_test_tensor)
+        scheduler.step(test_loss)
+
+    model.eval()
+    with torch.no_grad():
+        y_pred = model(X_test_tensor)
+        mse = mean_squared_error(y_test, y_pred.numpy())
+        r2 = r2_score(y_test, y_pred.numpy())
+
+    return mse, r2
+def tune_random_forest(X_train, y_train):
+    param_dist = {
+        'n_estimators': [100, 200, 300],
+        'max_depth': [10, 20, 30, None],
+        'min_samples_split': [2, 5, 10],
+        'min_samples_leaf': [1, 2, 4],
+    }
+    rf = RandomForestRegressor(random_state=42, n_jobs=-1)
+    rf_random = RandomizedSearchCV(estimator=rf, param_distributions=param_dist, n_iter=20, cv=3, random_state=42,
+                                   n_jobs=-1)
+    rf_random.fit(X_train, y_train)
+    return rf_random.best_estimator_
+
+
+def tune_xgboost(X_train, y_train):
+    param_dist = {
+        'n_estimators': [100, 200, 300],
+        'learning_rate': [0.01, 0.1, 0.3],
+        'max_depth': [3, 4, 5, 6],
+        'min_child_weight': [1, 2, 3],
+        'subsample': [0.8, 0.9, 1.0],
+        'colsample_bytree': [0.8, 0.9, 1.0]
+    }
+    xgb_model = xgb.XGBRegressor(random_state=42, n_jobs=-1)
+    xgb_random = RandomizedSearchCV(estimator=xgb_model, param_distributions=param_dist, n_iter=20, cv=3,
+                                    random_state=42, n_jobs=-1)
+    xgb_random.fit(X_train, y_train)
+    return xgb_random.best_estimator_
+
+
+def tune_lightgbm(X_train, y_train):
+    param_dist = {
+        'num_leaves': [15, 31, 50],
+        'learning_rate': [0.05, 0.1, 0.2],
+        'n_estimators': [100, 200, 300],
+        'subsample': [0.8, 0.9, 1.0],
+        'colsample_bytree': [0.8, 0.9, 1.0],
+        'min_child_samples': [20, 30, 50],
+        'min_split_gain': [0.01, 0.1, 0.3],
+        'reg_alpha': [0, 0.1, 0.5],
+        'reg_lambda': [0, 0.1, 0.5]
+    }
+
+    def fit_with_timeout(estimator, X, y, timeout=300):
+        start_time = time.time()
+        estimator.fit(X, y)
+        if time.time() - start_time > timeout:
+            raise TimeoutError("LightGBM training exceeded the time limit.")
+        return estimator
+
+    lgb_model = lgb.LGBMRegressor(random_state=42, n_jobs=-1, min_data_in_leaf=5, max_depth=10)
+    fit_with_timeout_partial = partial(fit_with_timeout, timeout=300)  # 5 minutes timeout
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=ConvergenceWarning)
+        warnings.filterwarnings("ignore", category=UserWarning)
+        lgb_random = RandomizedSearchCV(
+            estimator=lgb_model,
+            param_distributions=param_dist,
+            n_iter=20,
+            cv=3,
+            random_state=42,
+            n_jobs=-1,
+            error_score='raise'
+        )
+        try:
+            lgb_random.fit(X_train, y_train)
+            return lgb_random.best_estimator_
+        except Exception as e:
+            logging.warning(f"LightGBM tuning failed: {str(e)}")
+            return None
 
 
 def main():
+    start_time = time.time()
+    logging.info("Starting the main process...")
+
     # Data Preprocessing
     zip_filepath = r'data/Most Streamed Spotify Songs 2024.csv.zip'
     csv_filename = 'Most Streamed Spotify Songs 2024.csv'
 
     X, y, features = preprocess_data(zip_filepath, csv_filename)
+    logging.info(f"Data preprocessed. Shape of X: {X.shape}, Shape of y: {y.shape}")
+
+    # Handle outliers
+    X, y = handle_outliers(X, y)
+    logging.info(f"Outliers handled. New shape of X: {X.shape}, New shape of y: {y.shape}")
+
+    # Create polynomial features
+    X_poly = create_polynomial_features(X)
+    logging.info(f"Polynomial features created. New shape of X: {X_poly.shape}")
+
+    # Feature engineering
+    X_engineered = feature_engineering(X_poly)
+    logging.info(f"Feature engineering completed. New shape of X: {X_engineered.shape}")
+
+    # Transform target variable
+    pt = PowerTransformer(method='yeo-johnson')
+    y_transformed = pt.fit_transform(y.values.reshape(-1, 1)).ravel()
 
     # Split the data
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X_engineered, y_transformed, test_size=0.2, random_state=42)
+    logging.info("Data split into train and test sets")
 
-    # Tune and train models
+    # Feature selection
+    selector = SelectFromModel(RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1))
+    X_train_selected = selector.fit_transform(X_train, y_train)
+    X_test_selected = selector.transform(X_test)
+    logging.info(f"Feature selection completed. New shape of X_train: {X_train_selected.shape}")
+
+    # Scale the data
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train_selected)
+    X_test_scaled = scaler.transform(X_test_selected)
+
+    # Convert data to float32
+    X_train_scaled = X_train_scaled.astype(np.float32)
+    X_test_scaled = X_test_scaled.astype(np.float32)
+    y_train = y_train.astype(np.float32)
+    y_test = y_test.astype(np.float32)
+
+    # Get all models
+    input_size = X_train_scaled.shape[1]
+    models = get_models(input_size)
+
+    # Train and evaluate models
     results = {}
 
-    print("Tuning Random Forest...")
-    rf_tuned = tune_random_forest(X_train, y_train)
-    rf_pred = rf_tuned.predict(X_test)
-    results['Tuned Random Forest'] = {'MSE': mean_squared_error(y_test, rf_pred), 'R2': r2_score(y_test, rf_pred)}
-
-    print("Tuning Gradient Boosting...")
-    gb_tuned = tune_gradient_boosting(X_train, y_train)
-    gb_pred = gb_tuned.predict(X_test)
-    results['Tuned Gradient Boosting'] = {'MSE': mean_squared_error(y_test, gb_pred), 'R2': r2_score(y_test, gb_pred)}
-
-    print("Tuning KNN...")
-    knn_tuned = tune_knn(X_train, y_train)
-    knn_pred = knn_tuned.predict(X_test)
-    results['Tuned KNN'] = {'MSE': mean_squared_error(y_test, knn_pred), 'R2': r2_score(y_test, knn_pred)}
-
-    print("Training Improved NN...")
-    improved_nn = ImprovedNN(X_train.shape[1])
-    mse, r2 = train_model(improved_nn, X_train, y_train, X_test, y_test, epochs=200, batch_size=32)
-    results['Improved NN'] = {'MSE': mse, 'R2': r2}
+    for name, model in models.items():
+        logging.info(f"Training {name}...")
+        try:
+            if name in ['Random Forest', 'Gradient Boosting', 'SVR', 'Elastic Net', 'KNN']:
+                model.fit(X_train_scaled, y_train)
+                y_pred = model.predict(X_test_scaled)
+                mse = mean_squared_error(y_test, y_pred)
+                r2 = r2_score(y_test, y_pred)
+            else:
+                mse, r2 = train_model(model, X_train_scaled, y_train, X_test_scaled, y_test)
+            results[name] = {'MSE': mse, 'R2': r2}
+            logging.info(f"{name} training completed. MSE: {mse:.4f}, R2: {r2:.4f}")
+        except Exception as e:
+            logging.error(f"Error training {name}: {str(e)}")
+            continue
 
     # Plot results
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(15, 10))
     mse_values = [result['MSE'] for result in results.values()]
     r2_values = [result['R2'] for result in results.values()]
 
-    plt.subplot(1, 2, 1)
+    plt.subplot(2, 1, 1)
     plt.bar(results.keys(), mse_values)
     plt.title('Mean Squared Error')
     plt.xticks(rotation=45, ha='right')
 
-    plt.subplot(1, 2, 2)
+    plt.subplot(2, 1, 2)
     plt.bar(results.keys(), r2_values)
     plt.title('R-squared Score')
     plt.xticks(rotation=45, ha='right')
 
     plt.tight_layout()
-    save_plot("tuned_model_comparison.png")
+    save_plot("model_comparison.png")
+    logging.info("Results plotted and saved")
 
     # Print results
     for name, metrics in results.items():
@@ -136,8 +310,11 @@ def main():
         print()
 
     # Determine the best performing model
-    best_model = min(results, key=lambda x: results[x]['MSE'])
+    best_model = max(results, key=lambda x: results[x]['R2'])
     print(f"The best performing model is: {best_model}")
+
+    end_time = time.time()
+    logging.info(f"Total runtime: {end_time - start_time:.2f} seconds")
 
 
 if __name__ == "__main__":
