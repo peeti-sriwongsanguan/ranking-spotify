@@ -62,12 +62,26 @@ ranking_spotify/
    - Printed results for each model in the console.
    - The best performing model based on MSE.
 
-## EDA
+## Exploratory Data Analysis
+
 The following plot shows the missing value columns
 ![missing](image/missing_values_plot.png)
 
 The following plot shows the correlation matrix
 ![correlation](image/correlation_matrix_1.png)
+
+
+### Highly Correlated Features
+
+| Feature 1                     | Feature 2                      | Correlation |
+|-------------------------------|--------------------------------|-------------|
+| TikTok_Likes                  | TikTok_Views                   | 0.993       |
+| YouTube_Views                 | YouTube_Likes                  | 0.834       |
+| Spotify_Streams               | Spotify_Playlist_Count         | 0.815       |
+| Apple_Music_Playlist_Count    | Deezer_Playlist_Count          | 0.774       |
+| Spotify_Streams               | Apple_Music_Playlist_Count     | 0.745       |
+| Spotify_Streams               | Shazam_Counts                  | 0.735       |
+
 
 ## Models Implemented
 
