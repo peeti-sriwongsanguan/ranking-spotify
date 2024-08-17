@@ -46,9 +46,10 @@ class ResidualNN(nn.Module):
         self.fc1 = nn.Linear(input_size, 64)
         self.fc2 = nn.Linear(64, 64)
         self.fc3 = nn.Linear(64, 1)
+        self.projection = nn.Linear(input_size, 64)  # Add projection layer
 
     def forward(self, x):
-        identity = x
+        identity = self.projection(x)  # Project input to match dimensions
         out = torch.relu(self.fc1(x))
         out = torch.relu(self.fc2(out) + identity)
         return self.fc3(out)
@@ -80,18 +81,42 @@ class CNNModel(nn.Module):
         x = x.view(x.size(0), -1)
         return self.fc(x)
 
+# Quantum Neural Network setup
+dev = qml.device("default.qubit", wires=4)
+
+@qml.qnode(dev)
+def quantum_circuit(inputs, weights):
+    qml.AngleEmbedding(inputs, wires=range(4))
+    qml.BasicEntanglerLayers(weights, wires=range(4))
+    return [qml.expval(qml.PauliZ(wires=i)) for i in range(4)]
+
+class HybridModel(nn.Module):
+    def __init__(self, input_size):
+        super(HybridModel, self).__init__()
+        self.pre_net = nn.Linear(input_size, 4)
+        self.q_weights = nn.Parameter(torch.randn(3, 4, dtype=torch.float32))
+        self.post_net = nn.Linear(4, 1)
+
+    def forward(self, x):
+        x = x.float()  # Ensure input is float32
+        x = torch.relu(self.pre_net(x))
+        x = torch.stack([torch.tensor(quantum_circuit(x_item.tolist(), self.q_weights.tolist()), dtype=torch.float32) for x_item in x])
+        x = self.post_net(x)
+        return x
 
 def train_model(model, X_train, y_train, X_test, y_test, epochs=100, batch_size=32):
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters())
 
     X_train_tensor = torch.FloatTensor(X_train)
-    y_train_tensor = torch.FloatTensor(y_train.values).unsqueeze(1)
+    y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
+    X_test_tensor = torch.FloatTensor(X_test)
+    y_test_tensor = torch.FloatTensor(y_test).unsqueeze(1)
+
     train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
-    X_test_tensor = torch.FloatTensor(X_test)
-    y_test_tensor = torch.FloatTensor(y_test.values).unsqueeze(1)
+    model.float()  # Ensure model parameters are float32
 
     for epoch in range(epochs):
         model.train()
@@ -105,35 +130,10 @@ def train_model(model, X_train, y_train, X_test, y_test, epochs=100, batch_size=
     model.eval()
     with torch.no_grad():
         y_pred = model(X_test_tensor)
-        mse = mean_squared_error(y_test, y_pred.numpy())
-        r2 = r2_score(y_test, y_pred.numpy())
+        mse = mean_squared_error(y_test, y_pred.cpu().numpy())
+        r2 = r2_score(y_test, y_pred.cpu().numpy())
 
     return mse, r2
-
-
-# Quantum Neural Network setup
-dev = qml.device("default.qubit", wires=4)
-
-
-@qml.qnode(dev)
-def quantum_circuit(inputs, weights):
-    qml.AngleEmbedding(inputs, wires=range(4))
-    qml.BasicEntanglerLayers(weights, wires=range(4))
-    return [qml.expval(qml.PauliZ(wires=i)) for i in range(4)]
-
-
-class HybridModel(nn.Module):
-    def __init__(self, input_size):
-        super(HybridModel, self).__init__()
-        self.pre_net = nn.Linear(input_size, 4)
-        self.q_weights = nn.Parameter(torch.randn(3, 4))
-        self.post_net = nn.Linear(4, 1)
-
-    def forward(self, x):
-        x = torch.relu(self.pre_net(x))
-        x = torch.tensor([quantum_circuit(x_item, self.q_weights) for x_item in x])
-        x = self.post_net(x)
-        return x
 
 
 def get_models(input_size):

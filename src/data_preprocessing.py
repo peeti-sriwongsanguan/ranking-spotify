@@ -140,7 +140,7 @@ def preprocess_data(zip_filepath, csv_filename):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    return X_scaled, y, features
+    return X_scaled, y.values, features
 
 
 if __name__ == "__main__":
