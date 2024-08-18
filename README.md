@@ -68,8 +68,7 @@ The following plot shows the missing value columns
 ![missing](image/missing_values_plot.png)
 
 The following plot shows the correlation matrix
-![correlation](image/correlation_matrix_1.png)
-
+![correlation](image/correlation_matrix.png)
 
 ### Highly Correlated Features
 
