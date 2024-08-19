@@ -1,5 +1,6 @@
 # Core dependencies
 pennylane>=0.17.0,<1.0.0
 seaborn>=0.11.0,<0.13.0
-xgboost
-lightgbm
+xgboost==2.1.1
+lightgbm==4.5.0
+catboost==1.2.5

@@ -19,14 +19,9 @@ This repo compare the performance of different algorithms, including a quantum n
    git clone https://github.com/peeti-sriwongsanguan/ranking-spotify-EDA-PyTorch.git
    ```
 
-2. Create a virtual environment (optional):
+2. Create a virtual environment & Install the required packages:
    ```
-   conda activate spotify-ranking && conda update -y -n base -c conda-forge conda
-   ```
-
-3. Install the required libraries: (they are already in the YAML but I'm getting an error that packages can't be found)
-   ```
-   pip install -r requirements.txt
+   conda env create -f environment.yml && conda activate spotify-ranking && conda update -y -n base -c conda-forge conda
    ```
    
 ## Project Struture
