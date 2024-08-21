@@ -7,7 +7,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 import numpy as np
 
-
 def read_zip_file(zip_filepath, csv_filename, encoding='ISO-8859-1'):
     with zipfile.ZipFile(zip_filepath, 'r') as myZip:
         with myZip.open(csv_filename) as myZipCsv:
@@ -15,13 +14,15 @@ def read_zip_file(zip_filepath, csv_filename, encoding='ISO-8859-1'):
             df.columns = df.columns.str.replace(' ', '_')
             return df
 
-
 def clean_numeric_columns(df, columns):
     for column in columns:
-        df[column] = df[column].str.replace(',', '')
-        df[column] = pd.to_numeric(df[column], errors='coerce')
+        if df[column].dtype == 'object':
+            df[column] = df[column].str.replace(',', '')
+            df[column] = pd.to_numeric(df[column], errors='coerce')
+        else:
+            # If the column is already numeric, just ensure it's the right type
+            df[column] = pd.to_numeric(df[column], errors='coerce')
     return df
-
 
 def plot_n_drop_missing(df, missing_value=40):
     missing_percent = df.isnull().mean() * 100
@@ -58,11 +59,13 @@ def plot_n_drop_missing(df, missing_value=40):
 
     return df
 
-
-def plot_correlation_matrix(df, filename='correlation_matrix_1.png'):
+def plot_correlation_matrix(df, filename='correlation_matrix.png'):
     plt.figure(figsize=(15, 15))
     correlation_matrix = df.select_dtypes(exclude='object').corr().round(decimals=2)
+    mask = np.zeros_like(correlation_matrix)
+    mask[np.triu_indices_from(mask, 1)] = True
     sns.heatmap(correlation_matrix,
+                mask=mask,
                 annot=True,
                 cmap='coolwarm',
                 fmt='.2f',
@@ -73,7 +76,6 @@ def plot_correlation_matrix(df, filename='correlation_matrix_1.png'):
     plt.title('Correlation Matrix')
     save_plot(filename)
 
-
 def save_plot(filename):
     directory = "image"
     if not os.path.exists(directory):
@@ -83,7 +85,6 @@ def save_plot(filename):
         os.remove(filepath)
     plt.savefig(filepath)
     print(f"Plot saved to {filepath}")
-
 
 def find_highly_correlated_features(df, threshold=0.70):
     numeric_df = df.select_dtypes(include=[float, int])
@@ -97,18 +98,11 @@ def find_highly_correlated_features(df, threshold=0.70):
     print(highest_corr)
     return highest_corr
 
-
-# Remove rows with infinity values
 def clean_data(df, features):
-
     df = df.replace([np.inf, -np.inf], np.nan)
-
-    # Impute NaN values with mean
     imputer = SimpleImputer(strategy='mean')
     df_imputed = pd.DataFrame(imputer.fit_transform(df[features]), columns=features)
-
     return df_imputed
-
 
 def preprocess_data(zip_filepath, csv_filename):
     df = read_zip_file(zip_filepath, csv_filename)
@@ -116,7 +110,7 @@ def preprocess_data(zip_filepath, csv_filename):
     numeric_columns = ['Spotify_Streams', 'Spotify_Playlist_Count', 'Spotify_Playlist_Reach',
                        'YouTube_Views', 'YouTube_Likes', 'TikTok_Posts', 'TikTok_Likes',
                        'TikTok_Views', 'YouTube_Playlist_Reach', 'AirPlay_Spins', 'Deezer_Playlist_Reach',
-                       'Pandora_Streams', 'Pandora_Track_Stations', 'Shazam_Counts', 'All_Time_Rank']
+                       'Pandora_Streams', 'Pandora_Track_Stations', 'Shazam_Counts', 'Track_Score']
 
     df = clean_numeric_columns(df.copy(), numeric_columns)
     pd.set_option('display.float_format', lambda x: '%.f' % x)
@@ -128,11 +122,9 @@ def preprocess_data(zip_filepath, csv_filename):
     features = ['Spotify_Streams', 'Spotify_Playlist_Count', 'Spotify_Playlist_Reach', 'Spotify_Popularity',
                 'YouTube_Views', 'YouTube_Likes', 'TikTok_Posts', 'TikTok_Likes', 'TikTok_Views']
 
-    # Clean data to remove NaN and infinity values
     X = clean_data(df, features)
-    y = df['All_Time_Rank'].dropna().astype(float)
+    y = df['Track_Score'].dropna().astype(float)
 
-    # Ensure X and y have the same number of samples
     common_index = X.index.intersection(y.index)
     X = X.loc[common_index]
     y = y.loc[common_index]
@@ -142,7 +134,6 @@ def preprocess_data(zip_filepath, csv_filename):
 
     return X_scaled, y.values, features
 
-
 if __name__ == "__main__":
     zip_filepath = r'data/Most Streamed Spotify Songs 2024.csv.zip'
     csv_filename = 'Most Streamed Spotify Songs 2024.csv'
@@ -151,4 +142,4 @@ if __name__ == "__main__":
     print(f"X shape: {X.shape}")
     print(f"y shape: {y.shape}")
     print("Features:", features)
-    print("Sample of y:", y.head())
+    print("Sample of y:", y[:5])
